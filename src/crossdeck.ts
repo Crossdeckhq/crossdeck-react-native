@@ -217,6 +217,13 @@ export class CrossdeckClient {
       appVersion: options.appVersion ?? null,
       platform: options.platform ?? detectPlatform(),
       timeoutMs: options.timeoutMs ?? 15_000,
+      // Per-platform identity claims for the bank-grade identity
+      // lock. Empty string means "not supplied" — the HTTP layer
+      // skips the header in that case and the backend will reject
+      // with bundle_id_not_allowed / package_name_not_allowed at
+      // first request if the project requires the lock.
+      bundleId: options.bundleId ?? "",
+      packageName: options.packageName ?? "",
     };
 
     const debug = new ConsoleDebugLogger();

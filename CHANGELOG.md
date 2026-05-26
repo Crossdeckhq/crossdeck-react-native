@@ -4,6 +4,22 @@ All notable changes to `@cross-deck/react-native` will be documented
 here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] — 2026-05-26
+
+Patch — wire `bundleId` + `packageName` (per-platform identity-
+lock fields declared on `CrossdeckOptions` since v1.3.0) into
+the `InternalState` opts merge. tsc accepted the missing fields
+in monorepo CI because the monorepo test workflow doesn't lint
+the RN SDK — only the Web SDK gets type-checked. The public
+crossdeck-react-native publish workflow DOES run `npm run lint`
+and aborted with TS2322. Fix: default both to empty string in
+the opts initialiser (HTTP layer skips the header when empty;
+backend rejects with bundle_id_not_allowed /
+package_name_not_allowed at first request if the project
+requires the lock — intentional fail-closed). v1.4.1 was
+tagged on crossdeck-react-native but never reached npm.
+**No SDK code changes vs v1.4.0 / v1.4.1**.
+
 ## [1.4.1] — 2026-05-26
 
 Patch — add automated npm publish workflow to the public
