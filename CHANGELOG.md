@@ -4,6 +4,23 @@ All notable changes to `@cross-deck/react-native` will be documented
 here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-05-26
+
+**Bank-grade reconciliation release.** Joined the v1.4.0 release line with the rest of the Crossdeck SDK suite. 6-pillar KPMG-style audit closed; every behavioural guarantee registered in the monorepo's `contracts/` directory with a CI-enforced audit job.
+
+### Added
+
+- **Per-user entitlement cache isolation.** Storage key is now `crossdeck:entitlements:<sha256(userId)>` — a user-switch on a shared device cannot physically read prior user's cached entitlements even if the in-memory clear is somehow skipped. `reset()` wipes EVERY per-user slot via the persisted index. New pure-JS SHA-256 helper.
+- **Deterministic `Idempotency-Key` on `syncPurchases()`** — same JWS/purchaseToken → same key. Cross-SDK parity oracle CI-pinned.
+- **`PurchaseResult.idempotent_replay?: boolean`** — true when the backend replayed a cached response.
+- **`purchase.completed` event on every successful `syncPurchases()`** — funnel parity with native auto-track.
+- **`setSessionId(sessionId: string | null)`** — host-driven session lifecycle. Call from your AppState change listener so every `track()` event carries the `sessionId` property — funnel parity with the web SDK.
+
+### Changed
+
+- **`init()` re-entry now drains the prior `EventQueue`'s pending timer** before swapping `this.state`. Pre-1.4.0 the timer fired AFTER the state swap, sending old-init events under new-init identity.
+- **Default event-queue flush interval is now 2000ms** (was 5000ms) — cross-SDK parity.
+
 ## [1.0.0] — 2026-05-24
 
 First public release. Built bank-grade from day one — every audit

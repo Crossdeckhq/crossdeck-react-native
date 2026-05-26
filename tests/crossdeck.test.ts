@@ -138,7 +138,9 @@ describe("identify — entitlement-cache leak guard (audit P0 #5)", () => {
     // Pre-populate the entitlement cache WITHOUT a cdcust (the
     // partial-wipe scenario from audit P0 #5).
     await storage.setItem(
-      "crossdeck:entitlements",
+      // v1.4.0 keying: anonymous slot is `:_anon`; identified slots
+      // live under `:<sha256(userId)>` (see entitlement-cache.ts).
+      "crossdeck:entitlements:_anon",
       JSON.stringify({
         v: 1,
         entitlements: [

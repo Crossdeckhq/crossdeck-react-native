@@ -43,6 +43,7 @@ import {
 } from "./http";
 import { IdentityStore, randomChars } from "./identity";
 import { EntitlementCache, type EntitlementsListener } from "./entitlement-cache";
+import { deriveIdempotencyKeyForPurchase } from "./idempotency-key";
 import { EventQueue, type QueuedEvent } from "./event-queue";
 import { PersistentEventStore } from "./event-storage";
 import { detectDefaultStorage, MemoryStorage } from "./storage";
@@ -99,6 +100,10 @@ interface InternalState {
   };
   debug: DebugLogger;
   developerUserId: string | null;
+  /** v1.4.0 Phase 3.4 — currently-active session id (set by the
+   * host via setSessionId(...)). Attached to every track event so
+   * cross-platform funnel queries reconcile with web SDK sessions. */
+  sessionId: string | null;
   lastServerTime: number | null;
   lastClientTime: number | null;
   /** Promise that resolves when async hydration completes. */
@@ -141,6 +146,23 @@ export class CrossdeckClient {
       }
       try {
         this.state.appStateSubscription?.remove();
+      } catch {
+        /* ignore */
+      }
+      // v1.4.0 Phase 5.5 — drain the prior EventQueue's pending
+      // setTimeout BEFORE we replace this.state. Pre-fix the timer
+      // would fire AFTER the state swap, firing against new
+      // http/identity references with old-init events — a
+      // cross-identity leak risk during HMR / config swap. flush()
+      // cancels the timer (see EventQueue.cancelTimerIfSet) and
+      // ships queued events out under the prior init's identity.
+      //
+      // CRITICAL: do NOT clear the persistent event store here.
+      // The durable AsyncStorage queue belongs to the SDK lifetime,
+      // not the init() lifetime — a survived crash mid-flush
+      // re-hydrates on the next init.
+      try {
+        void this.state.events.flush();
       } catch {
         /* ignore */
       }
@@ -188,7 +210,9 @@ export class CrossdeckClient {
       storagePrefix: options.storagePrefix ?? "crossdeck:",
       autoHeartbeat: options.autoHeartbeat ?? true,
       eventFlushBatchSize: options.eventFlushBatchSize ?? 20,
-      eventFlushIntervalMs: options.eventFlushIntervalMs ?? 5000,
+      // v1.4.0 Phase 3.3 — flush interval default parity at 2000ms
+      // across every SDK. Per-instance override stays.
+      eventFlushIntervalMs: options.eventFlushIntervalMs ?? 2000,
       sdkVersion: options.sdkVersion ?? SDK_VERSION,
       appVersion: options.appVersion ?? null,
       platform: options.platform ?? detectPlatform(),
@@ -288,6 +312,7 @@ export class CrossdeckClient {
       options: opts,
       debug,
       developerUserId: null,
+      sessionId: null,
       lastServerTime: null,
       lastClientTime: null,
       started: false,
@@ -439,26 +464,23 @@ export class CrossdeckClient {
     };
     if (options?.email) body.email = options.email;
     if (traits) body.traits = traits;
+
+    // Bank-grade three-layer entitlement-cache isolation (v1.4.0
+    // Phase 1.3). Switch the cache slot BEFORE the alias POST so a
+    // mid-flight failure can't leave the cache pointing at the
+    // prior user. setUserKey:
+    //   (a) hashes the new userId into a physically separate
+    //       AsyncStorage suffix — `crossdeck:entitlements:<sha256>`,
+    //   (b) unconditionally wipes the in-memory snapshot (no
+    //       conditional gating — every identify() guarantees a
+    //       fresh slot),
+    //   (c) rehydrates from the new slot so a returning user sees
+    //       their last-known-good immediately.
+    await s.entitlements.setUserKey(userId);
+
     const result = await s.http.request<AliasResult>("POST", "/identity/alias", {
       body,
     });
-
-    // A different user identifying on this device — the prior
-    // user's durable entitlement cache must not leak to them.
-    // Bank-grade unconditional clear when the resolved cdcust
-    // differs from the in-memory snapshot OR when the cache is
-    // non-empty under an unknown identity (Batch C audit fix
-    // ported from web).
-    const priorCdcust = s.identity.crossdeckCustomerId;
-    const cacheHasEntries = s.entitlements.list().length > 0;
-    if (
-      (priorCdcust &&
-        result.crossdeckCustomerId &&
-        priorCdcust !== result.crossdeckCustomerId) ||
-      (!priorCdcust && cacheHasEntries)
-    ) {
-      s.entitlements.clear();
-    }
     s.identity.setCrossdeckCustomerId(result.crossdeckCustomerId);
     s.identity.setDeveloperUserId(userId);
     s.developerUserId = userId;
@@ -787,7 +809,8 @@ export class CrossdeckClient {
     //   1. Device info
     //   2. Super properties
     //   3. Group memberships
-    //   4. Caller-supplied properties (sanitised)
+    //   4. SessionId (v1.4.0 Phase 3.4 — funnel parity with web)
+    //   5. Caller-supplied properties (sanitised)
     const enriched: EventProperties = { ...s.deviceInfo };
     const supers = s.superProps.getSuperProperties();
     for (const k of Object.keys(supers)) {
@@ -796,6 +819,14 @@ export class CrossdeckClient {
     const groupIds = s.superProps.getGroupIds();
     if (Object.keys(groupIds).length > 0) {
       enriched.$groups = groupIds;
+    }
+    // v1.4.0 Phase 3.4 — attach sessionId so RN events reconcile
+    // with the web SDK's session-anchored funnel queries. RN
+    // doesn't own session lifecycle (the host's AppState +
+    // nav library do); call setSessionId() from your AppState
+    // change listener to populate this.
+    if (s.sessionId) {
+      enriched.sessionId = s.sessionId;
     }
     Object.assign(enriched, validation.properties);
 
@@ -872,20 +903,77 @@ export class CrossdeckClient {
           "syncPurchases (google) requires a purchaseToken string from Google Billing.",
       });
     }
+    const body = { ...input, rail };
+    // Phase 2.2 bank-grade contract: deterministic Idempotency-Key
+    // from the body. Same input → same key → backend short-circuits
+    // with idempotent_replay: true on retry.
+    const idempotencyKey = deriveIdempotencyKeyForPurchase(body);
     const result = await s.http.request<PurchaseResult>("POST", "/purchases/sync", {
-      // Spread input FIRST so the explicit `rail` default below wins
-      // — `{ ...input, rail }` puts the default last so an explicit
-      // `rail: undefined` from the caller doesn't override.
-      body: { ...input, rail },
+      body,
+      idempotencyKey,
     });
     s.identity.setCrossdeckCustomerId(result.crossdeckCustomerId);
     s.entitlements.setFromList(result.entitlements);
+    // Phase 3.5 (v1.4.0) — emit purchase.completed so RN manual
+    // syncPurchases callers show up on the same funnel as the
+    // Swift/Android auto-track path. Schema mirrors the native
+    // auto-track shape on event name + rail/productId.
+    try {
+      const sourceProductId = result.entitlements[0]?.source.productId;
+      const sourceSubscriptionId = result.entitlements[0]?.source.subscriptionId;
+      const props: Record<string, unknown> = { rail };
+      if (sourceProductId) props.productId = sourceProductId;
+      if (sourceSubscriptionId) props.subscriptionId = sourceSubscriptionId;
+      if (result.idempotent_replay) props.idempotent_replay = true;
+      this.track("purchase.completed", props);
+    } catch {
+      // defensive
+    }
     s.debug.emit(
       "sdk.purchase_evidence_sent",
       `${rail === "apple" ? "StoreKit" : "Google Billing"} purchase evidence forwarded. Waiting for backend verification.`,
       { rail },
     );
     return result;
+  }
+
+  /**
+   * v1.4.0 Phase 3.4 — set the active session id. RN doesn't own
+   * session lifecycle (that's the host's AppState + nav library);
+   * the host calls `setSessionId()` from its AppState change
+   * listener so every subsequent `track()` event carries the
+   * `sessionId` property — matches the web SDK's session-anchored
+   * funnel queries.
+   *
+   * ```ts
+   * import { AppState } from "react-native";
+   *
+   * let sessionId = uuid();
+   * AppState.addEventListener("change", (next) => {
+   *   if (next === "active") {
+   *     // New session if backgrounded > 30 min.
+   *     sessionId = uuid();
+   *     Crossdeck.setSessionId(sessionId);
+   *   } else if (next === "background") {
+   *     void Crossdeck.flush();
+   *   }
+   * });
+   * Crossdeck.setSessionId(sessionId);
+   * ```
+   *
+   * Pass `null` to clear (between sessions, on logout, etc).
+   */
+  setSessionId(sessionId: string | null): void {
+    const s = this.requireStarted();
+    s.sessionId = sessionId ?? null;
+    if (s.debug.enabled) {
+      s.debug.emit(
+        "sdk.configured",
+        sessionId
+          ? `Session id set to ${sessionId}; subsequent track events will carry it.`
+          : "Session id cleared; subsequent track events will omit it.",
+      );
+    }
   }
 
   /** Toggle verbose diagnostic logging. */
@@ -933,7 +1021,12 @@ export class CrossdeckClient {
       }
     }
     this.state.identity.reset();
-    this.state.entitlements.clear();
+    // Logout-grade wipe: removes EVERY per-user entitlement slot on
+    // this device (layer (c) of the v1.4.0 isolation fix). A shared
+    // device can never leave another user's entitlements readable
+    // after a logout. Fire-and-forget — reset() stays synchronous
+    // to preserve its existing public contract.
+    void this.state.entitlements.clearAll();
     this.state.events.reset();
     this.state.superProps.clear();
     this.state.breadcrumbs.clear();

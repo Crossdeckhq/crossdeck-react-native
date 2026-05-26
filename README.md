@@ -56,10 +56,23 @@ Every Crossdeck SDK ships these patterns by default:
   customer reads as Pro on the FIRST `isEntitled()` after `init()`,
   even on a cold launch with no network. A Crossdeck outage can
   never fail a paying customer down to free.
+- **Per-user cache isolation (v1.4.0).** Every `identify(userId)`
+  switches the entitlement cache to a per-user AsyncStorage slot
+  (`crossdeck:entitlements:<sha256(userId)>`) and unconditionally
+  wipes the in-memory snapshot. A user-switch on a shared device
+  CANNOT cross-read a prior user's cache, even if the in-memory
+  clear is somehow skipped — the storage keys are physically
+  separate. `reset()` then wipes every per-user slot on the device
+  (logout-grade).
 - **Queue durability + Stripe-style Idempotency-Key reuse.** Events
   spliced for a flush persist to AsyncStorage with the in-flight
   batch attached, so an app crash mid-flight replays the batch on
   the next launch. Backend dedupes on `(projectId, eventId)`.
+- **Deterministic Idempotency-Key on `syncPurchases` (v1.4.0).**
+  Same signed transaction → same key → backend short-circuits
+  with `idempotent_replay: true` on retry. A network blip or app
+  crash mid-flight that re-fires the same purchase never
+  double-processes.
 - **4xx hard-stop.** Permanent failures (401 key revoked, 400/422
   schema, 403 permission, 404 endpoint) drop the batch + fire
   `onPermanentFailure` + `console.error` regardless of debug mode.
