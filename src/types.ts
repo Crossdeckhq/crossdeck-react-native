@@ -152,6 +152,37 @@ export interface CrossdeckOptions {
    */
   platform?: Platform;
   /**
+   * iOS Bundle ID (e.g. `com.acme.app`). REQUIRED for iOS builds.
+   * Sent as `X-Crossdeck-Bundle-Id` on every request so the backend
+   * can enforce the bank-grade identity lock against the bundleId
+   * stored on the iOS app key. Without it, every iOS request is
+   * rejected with 403 / bundle_id_not_allowed.
+   *
+   * Source the value from your native shell:
+   *   * Expo: `import { applicationId } from "expo-application"`
+   *   * Bare RN: `react-native-device-info.getBundleId()` or
+   *     `NativeModules.PlatformConstants.bundleId`.
+   *
+   * Safe to set on Android too — the backend ignores it for non-iOS
+   * platforms, so a single config object works for both runtimes.
+   */
+  bundleId?: string;
+  /**
+   * Android applicationId / package name (e.g. `com.acme.app`).
+   * REQUIRED for Android builds. Sent as `X-Crossdeck-Package-Name`
+   * on every request so the backend can enforce the bank-grade
+   * identity lock against the packageName stored on the Android
+   * app key. Without it, every Android request is rejected with
+   * 403 / package_name_not_allowed.
+   *
+   * Source from:
+   *   * Expo: `import { applicationId } from "expo-application"`
+   *     (same field on Android)
+   *   * Bare RN: `NativeModules.PlatformConstants.packageName` /
+   *     `react-native-device-info.getBundleId()`.
+   */
+  packageName?: string;
+  /**
    * Per-request timeout in ms. Default 15000. A captive portal or
    * hung connection would otherwise inherit the runtime's default
    * (5+ minutes) and stall the queue.

@@ -107,6 +107,12 @@ interface InternalState {
   started: boolean;
   /** True once the async hydration in `ready` has completed. */
   hydrated: boolean;
+  /**
+   * AppState subscription handle so re-init / teardown can detach
+   * the listener cleanly. RN apps that hot-reload would otherwise
+   * pile up duplicate handlers each module reload.
+   */
+  appStateSubscription: { remove: () => void } | null;
 }
 
 export class CrossdeckClient {
@@ -124,11 +130,17 @@ export class CrossdeckClient {
    */
   init(options: CrossdeckOptions): void {
     if (this.state) {
-      // Re-init — tear down listeners (error tracker fetch wrap)
-      // before reconstructing. Otherwise duplicate global handlers
-      // pile up.
+      // Re-init — tear down listeners (error tracker fetch wrap +
+      // AppState subscription) before reconstructing. Otherwise
+      // duplicate global handlers pile up on every hot-reload in
+      // dev and on every test re-init.
       try {
         this.state.errors?.uninstall();
+      } catch {
+        /* ignore */
+      }
+      try {
+        this.state.appStateSubscription?.remove();
       } catch {
         /* ignore */
       }
@@ -191,6 +203,11 @@ export class CrossdeckClient {
       baseUrl: opts.baseUrl,
       sdkVersion: opts.sdkVersion,
       timeoutMs: opts.timeoutMs,
+      // Per-platform identity claims — sent as X-Crossdeck-Bundle-Id
+      // / X-Crossdeck-Package-Name. Backend enforces these against
+      // the app key's stored identity (bank-grade fail-closed).
+      bundleId: options.bundleId,
+      packageName: options.packageName,
     });
 
     // Identity continuity. When persistIdentity is off (typical
@@ -276,7 +293,54 @@ export class CrossdeckClient {
       started: false,
       hydrated: false,
       ready: Promise.resolve(),
+      appStateSubscription: null,
     };
+
+    // Wire AppState observer for background persist + flush. When the
+    // app moves out of `active` the SDK persists the buffer to
+    // AsyncStorage immediately and triggers a best-effort flush
+    // (Android gives ~tens of seconds before suspension; iOS gives a
+    // few seconds — enough for a small batch). Without this, an RN
+    // app that backgrounds during a buffered idle window loses every
+    // buffered event when the OS later evicts the process.
+    //
+    // Mirrors the Web SDK's `pagehide` + `visibilitychange` wiring and
+    // the Swift SDK's UIApplication.willResignActive observer.
+    try {
+      const RN = require("react-native");
+      const AppState = RN?.AppState;
+      if (AppState && typeof AppState.addEventListener === "function") {
+        const sub = AppState.addEventListener("change", (next: string) => {
+          if (next === "background" || next === "inactive") {
+            // Both Android background + iOS inactive (e.g. app
+            // switcher) get the same treatment — persist + try
+            // to drain. Caller's flush() returns a Promise we
+            // intentionally don't await; AppState callbacks run
+            // synchronously and any unfinished flush continues in
+            // the background-execution budget.
+            try {
+              // flush() persists the buffer to disk synchronously
+              // (via the internal persistAll path) AND triggers a
+              // best-effort network ship. We don't await — AppState
+              // callbacks are synchronous; the ship continues in
+              // whatever background-execution budget the OS allows.
+              void this.state?.events.flush().catch(() => {
+                /* permanent-failure callback handles error routing */
+              });
+              debug.emit("sdk.queue_persisted", "persisted on AppState background");
+            } catch {
+              /* listener never crashes the app */
+            }
+          }
+        });
+        this.state.appStateSubscription = sub;
+      }
+    } catch {
+      // react-native AppState unavailable — happens in JVM unit
+      // tests, web-only build environments. SDK still functions;
+      // just no auto-flush on background. Consumer can wire their
+      // own AppState observer + call Crossdeck.flush() manually.
+    }
 
     // Error capture — install BEFORE async hydration so an error
     // during boot still surfaces. consented gate keeps reports

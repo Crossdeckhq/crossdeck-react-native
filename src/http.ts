@@ -21,6 +21,36 @@ export interface HttpClientConfig {
   baseUrl: string;
   sdkVersion: string;
   /**
+   * iOS Bundle ID (e.g. `com.acme.app`). Sent as
+   * `X-Crossdeck-Bundle-Id` on every request when the runtime is
+   * iOS, so the backend's `isBundleIdAllowed()` can enforce the
+   * identity lock against the bundleId stored on the iOS app key.
+   *
+   * Bank-grade contract: the backend rejects iOS requests without
+   * a matching bundle ID with 403 / bundle_id_not_allowed.
+   *
+   * Source from the consumer's native shell. With `expo-application`:
+   *   `import { applicationId } from "expo-application";`
+   * With `react-native-device-info`:
+   *   `import DeviceInfo from "react-native-device-info";
+   *    DeviceInfo.getBundleId()`
+   * Or from the bare RN bridge as `NativeModules.RNCConfig.bundleId`
+   * when you ship the platform identifier yourself.
+   */
+  bundleId?: string;
+  /**
+   * Android package name / applicationId (e.g. `com.acme.app`). Sent
+   * as `X-Crossdeck-Package-Name` on every request when the runtime
+   * is Android. Same enforcement shape as `bundleId`: the backend
+   * rejects Android requests without a matching package name with
+   * 403 / package_name_not_allowed.
+   *
+   * On bare RN, source from
+   * `NativeModules.PlatformConstants.packageName` or
+   * `expo-application.applicationId`.
+   */
+  packageName?: string;
+  /**
    * Default request timeout in ms. Per-call `options.timeoutMs`
    * overrides. Caller's `options.timeoutMs: 0` disables the timeout
    * entirely (useful for tests that intentionally hang).
@@ -79,6 +109,19 @@ export class HttpClient {
       "Crossdeck-Sdk-Version": `${SDK_NAME}@${this.config.sdkVersion}`,
       Accept: "application/json",
     };
+    // Per-platform identity claim — the backend's isIdentityAllowed()
+    // enforces these against bundleId / packageName stored on the
+    // app key. The caller passes the right identifier at SDK init
+    // time (Platform.OS determines which is meaningful); we send
+    // BOTH when supplied so a single SDK instance dogfooded across
+    // bare iOS + bare Android picks up the right header per
+    // platform without the SDK doing runtime detection.
+    if (this.config.bundleId) {
+      headers["X-Crossdeck-Bundle-Id"] = this.config.bundleId;
+    }
+    if (this.config.packageName) {
+      headers["X-Crossdeck-Package-Name"] = this.config.packageName;
+    }
     if (options.idempotencyKey) {
       // Stripe pattern: same key on retries → server can
       // short-circuit duplicate work without inspecting the body.
