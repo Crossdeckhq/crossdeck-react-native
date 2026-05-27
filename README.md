@@ -157,6 +157,60 @@ Crossdeck.diagnostics();
 // }
 ```
 
+## Bank-grade contracts
+
+The SDK ships its own contracts registry — every behavioural guarantee the SDK makes (per-user cache isolation, deterministic Idempotency-Key, queue durability, etc.) lives in `contracts/**/*.json` at the monorepo root and is **bundled into every release**. The customer's lockfile pins SDK code + contracts atomically — drift between what the SDK does and what it claims is structurally impossible. See [`contracts/README.md`](https://github.com/VistaApps-za/crossdeck/blob/main/contracts/README.md) for the full architecture.
+
+### `CrossdeckContracts` — typed access to the bundled registry
+
+```ts
+import { CrossdeckContracts } from "@cross-deck/react-native";
+
+CrossdeckContracts.all();                              // enforced contracts only
+CrossdeckContracts.allIncludingHistorical();           // + proposed + retired
+CrossdeckContracts.byId("per-user-cache-isolation");
+CrossdeckContracts.byPillar("entitlements");
+CrossdeckContracts.withStatus("proposed");
+CrossdeckContracts.findByTestName("identify(B) makes A's entitlements unreachable from in-memory");
+CrossdeckContracts.sdkVersion;        // "1.5.0"
+CrossdeckContracts.bundledIn;         // "@cross-deck/react-native@1.5.0"
+```
+
+The `Contract` type is exported alongside; the binary-stability promise is documented in [`contracts/README.md`](https://github.com/VistaApps-za/crossdeck/blob/main/contracts/README.md).
+
+### `Crossdeck.reportContractFailure(input)` — surface contract test failures
+
+When a contract test asserts and fails — in your CI, a dogfood run, or a customer integration test — fire a typed `crossdeck.contract_failed` event over the **Crossdeck reliability channel**. This is one-way operational telemetry to the Crossdeck operations team (Privacy Policy §6, "Flow B"); it never enters your `track()` pipeline, never shows in your dashboard, never bills against your event quota. The wire shape is schema-locked at [`contracts/diagnostics/contract-failed-payload-schema-lock.json`](https://github.com/VistaApps-za/crossdeck/blob/main/contracts/diagnostics/contract-failed-payload-schema-lock.json):
+
+```ts
+Crossdeck.reportContractFailure({
+  contractId: "per-user-cache-isolation",
+  failureReason: "expected isolation across user switch, got cross-read",
+  runContext: __DEV__ ? "dogfood" : "ci",
+  runId: process.env.GITHUB_RUN_ID ?? Date.now().toString(36),
+  testRef: {
+    file: "tests/entitlement-cache-isolation.test.ts",
+    name: "identify(B) makes A's entitlements unreachable from in-memory",
+  },
+});
+```
+
+No new endpoint, no special ingest path — the event lands in the same pipeline every other `track()` call does. It surfaces immediately in the dashboard's live event feed, the breakdown chart (group by `contract_id`, `sdk_platform`), and any alert rule with `event = crossdeck.contract_failed`.
+
+Properties stamped on the wire:
+
+| Property | Source |
+|----------|--------|
+| `contract_id` | caller |
+| `sdk_version`, `sdk_platform` | auto-stamped (`@cross-deck/react-native` ships `sdk_platform: "react-native"`) |
+| `failure_reason`, `run_context`, `run_id` | caller |
+| `test_file`, `test_name` | set when `testRef` is provided |
+| `device_class` | optional, set by caller (categorical bucket — e.g. `"ios-phone"`, `"android-tablet"`) |
+
+The wire shape is schema-locked at [`contracts/diagnostics/contract-failed-payload-schema-lock.json`](https://github.com/VistaApps-za/crossdeck/blob/main/contracts/diagnostics/contract-failed-payload-schema-lock.json); per-SDK assertion tests gate it on every release. Free-form `extra` keys are not accepted — adding a field requires an amendment to the schema-lock contract first.
+
+For per-test-framework hooks see [`contracts/README.md` § Reporting contract failures](https://github.com/VistaApps-za/crossdeck/blob/main/contracts/README.md#reporting-contract-failures-back-to-crossdeck).
+
 ## Documentation
 
 - [Full SDK reference](https://cross-deck.com/docs/react-native-sdk)

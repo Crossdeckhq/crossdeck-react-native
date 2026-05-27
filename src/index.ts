@@ -12,6 +12,15 @@ export { CrossdeckError, parseRetryAfterHeader } from "./errors";
 export { MemoryStorage, AsyncStorageAdapter } from "./storage";
 export { SDK_NAME, SDK_VERSION, DEFAULT_BASE_URL } from "./http";
 export { scrubPii, scrubPiiFromProperties } from "./consent";
+export { CrossdeckContracts } from "./contracts";
+export type {
+  Contract,
+  ContractPillar,
+  ContractStatus,
+  ContractAppliesTo,
+  ContractTestRef,
+  ContractFailureInput,
+} from "./contracts";
 
 export type {
   CrossdeckOptions,

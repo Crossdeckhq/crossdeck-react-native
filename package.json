@@ -1,6 +1,6 @@
 {
   "name": "@cross-deck/react-native",
-  "version": "1.4.2",
+  "version": "1.5.1",
   "description": "Crossdeck SDK for React Native + Expo — verified subscriptions, entitlements, error capture, and product telemetry across iOS + Android JS apps in one package.",
   "license": "MIT",
   "homepage": "https://cross-deck.com",
@@ -19,6 +19,7 @@
       "require": "./dist/index.cjs",
       "react-native": "./dist/index.mjs"
     },
+    "./contracts.json": "./dist/contracts.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -32,7 +33,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "node scripts/emit-bundled-contracts.mjs && tsup && node scripts/emit-contracts.mjs",
     "build:watch": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",

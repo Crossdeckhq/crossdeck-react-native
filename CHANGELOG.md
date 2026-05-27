@@ -4,6 +4,57 @@ All notable changes to `@cross-deck/react-native` will be documented
 here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] — 2026-05-27
+
+`crossdeck.contract_failed` is now single-fire to a dedicated
+reliability endpoint instead of the customer's `track()` pipeline.
+Independent-controller flow per Privacy Policy §6; schema-locked by
+`contracts/diagnostics/contract-failed-payload-schema-lock.json`.
+`ContractFailureInput.extra` removed (schema-lock forbids unbounded
+fields); `ContractFailureInput.deviceClass` added.
+
+## [1.5.0] — 2026-05-26
+
+Minor — `CrossdeckContracts` + `reportContractFailure(...)` ship as a
+new public surface on every SDK simultaneously. Additive only; no
+behavioural change to existing APIs.
+
+**Added:**
+
+- **`CrossdeckContracts` namespace** — typed access to the bank-grade
+  contract registry. Methods: `all()`, `allIncludingHistorical()`,
+  `byId(id)`, `byPillar(pillar)`, `withStatus(status)`,
+  `findByTestName(name)`. Properties: `sdkVersion`, `bundledIn`
+  (e.g. `"@cross-deck/react-native@1.5.0"`).
+- **`Contract` type + `ContractPillar` / `ContractStatus` /
+  `ContractAppliesTo` unions + `ContractTestRef` + `ContractFailureInput`
+  interfaces** exported from the top-level entry. Treated as
+  binary-stable.
+- **`Crossdeck.reportContractFailure(input)` method** — fires a typed
+  `crossdeck.contract_failed` event through the standard `track()`
+  pipeline when a contract test asserts and fails. Wire properties:
+  `contract_id`, `sdk_version` (auto-stamped), `sdk_platform`
+  (auto-stamped to `"react-native"`), `failure_reason`, `run_context`
+  (`ci` | `dogfood` | `customer-app`), `run_id`, plus optional
+  `test_file` / `test_name`.
+
+**Fixed:**
+
+- Pre-hydration `track()` calls now correctly snapshot the
+  call-time `sessionId` and thread it through the deferred
+  enrichment body. Previously, two `track()` calls separated by
+  `setSessionId(...)` BEFORE hydration completed would both pick up
+  whatever `sessionId` was current at hydration resolution — silently
+  rewriting the first event with the second event's state. This
+  contract is RN-specific (Web/Node have no hydration window).
+
+**Changed:**
+
+- Contract registry source files migrated to camelCase keys
+  (`appliesTo`, `codeRef`, `testRef`, `registeredAt`,
+  `firstRegisteredIn`). The bundled `contracts.json` sidecar uses
+  the new keys; `bundledIn` is build-stamped, never in source.
+
 ## [1.4.2] — 2026-05-26
 
 Patch — wire `bundleId` + `packageName` (per-platform identity-

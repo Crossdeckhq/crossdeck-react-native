@@ -53,6 +53,8 @@ import { validateEventProperties } from "./event-validation";
 import { SuperPropertyStore } from "./super-properties";
 import { ConsentManager, scrubPiiFromProperties, type ConsentState } from "./consent";
 import { BreadcrumbBuffer, type Breadcrumb } from "./breadcrumbs";
+import type { ContractFailureInput } from "./contracts";
+import { sendDiagnosticTelemetry } from "./_diagnostic-telemetry";
 import {
   DEFAULT_ERROR_CAPTURE,
   ErrorTracker,
@@ -74,6 +76,19 @@ import type {
   PurchaseResult,
   Platform,
 } from "./types";
+
+/**
+ * Snapshot of call-time-volatile state captured at `track()` entry
+ * and threaded through `trackPostHydration()`. Without this, the
+ * post-hydration body would read state mutated AFTER the caller's
+ * track() returned — see the comment on `track()` for the racing
+ * pattern. Currently scoped to `sessionId` (the only volatile axis
+ * the v1.4.0 contract tests pin); add more fields here as the
+ * enrichment layer grows.
+ */
+interface TrackCallSnapshot {
+  sessionId: string | null;
+}
 
 interface InternalState {
   http: HttpClient;
@@ -735,6 +750,35 @@ export class CrossdeckClient {
    * stamped. Common-case `track()` after hydration runs entirely
    * synchronously.
    */
+  /**
+   * Emit `crossdeck.contract_failed` to the Crossdeck reliability
+   * endpoint — single-fire, one-way, never visible in the customer's
+   * dashboard. Goes over a dedicated HTTP path with the reliability
+   * publishable key embedded at build time; the customer's track()
+   * pipeline never carries `crossdeck.*` events. This is the
+   * independent-controller flow described in Privacy Policy §6
+   * ("Flow B"). The wire shape is fixed by the schema-lock contract
+   * at `contracts/diagnostics/contract-failed-payload-schema-lock.json`.
+   */
+  reportContractFailure(input: ContractFailureInput): void {
+    const payload: Record<string, string> = {
+      contract_id: input.contractId,
+      sdk_version: SDK_VERSION,
+      sdk_platform: "react-native",
+      failure_reason: input.failureReason,
+      run_context: input.runContext,
+      run_id: input.runId,
+    };
+    if (input.testRef) {
+      payload.test_file = input.testRef.file;
+      payload.test_name = input.testRef.name;
+    }
+    if (input.deviceClass) {
+      payload.device_class = input.deviceClass;
+    }
+    sendDiagnosticTelemetry(payload);
+  }
+
   track(name: string, properties?: EventProperties): void {
     const s = this.requireStarted();
     if (!name) {
@@ -744,11 +788,21 @@ export class CrossdeckClient {
         message: "track(name) requires a non-empty name.",
       });
     }
+    // Capture call-time-volatile state BEFORE deferring through
+    // `s.ready.then(...)`. Without this snapshot, two pre-hydration
+    // `track()` calls separated by `setSessionId(...)` (or any other
+    // mutation) would both read the LATEST value when the deferred
+    // bodies fire post-hydration — silently rewriting the first
+    // event with the second event's state. The Web SDK has no
+    // hydration window so this race only exists on RN.
+    const callTimeSnapshot: TrackCallSnapshot = {
+      sessionId: s.sessionId,
+    };
     if (!s.hydrated) {
-      void s.ready.then(() => this.trackPostHydration(s, name, properties));
+      void s.ready.then(() => this.trackPostHydration(s, name, properties, callTimeSnapshot));
       return;
     }
-    this.trackPostHydration(s, name, properties);
+    this.trackPostHydration(s, name, properties, callTimeSnapshot);
   }
 
   /**
@@ -760,7 +814,8 @@ export class CrossdeckClient {
   private trackPostHydration(
     s: InternalState,
     name: string,
-    properties?: EventProperties,
+    properties: EventProperties | undefined,
+    callTimeSnapshot: TrackCallSnapshot,
   ): void {
     // Consent gate. error.* events gate on consent.errors; everything
     // else gates on consent.analytics.
@@ -831,9 +886,11 @@ export class CrossdeckClient {
     // with the web SDK's session-anchored funnel queries. RN
     // doesn't own session lifecycle (the host's AppState +
     // nav library do); call setSessionId() from your AppState
-    // change listener to populate this.
-    if (s.sessionId) {
-      enriched.sessionId = s.sessionId;
+    // change listener to populate this. Read the call-time
+    // snapshot so two pre-hydration track() calls separated by
+    // setSessionId(...) keep their respective session anchors.
+    if (callTimeSnapshot.sessionId) {
+      enriched.sessionId = callTimeSnapshot.sessionId;
     }
     Object.assign(enriched, validation.properties);
 
