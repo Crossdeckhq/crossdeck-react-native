@@ -327,6 +327,17 @@ export class CrossdeckClient {
         console.error(headline);
         debug.emit("sdk.flush_permanent_failure", headline, { ...info });
       },
+      onParked: (info) => {
+        // Second signal channel (the queue already logged ONE console line).
+        // PARK is NOT a drop: events are held on-device (AsyncStorage) and
+        // resume on the next launch after upgrade. The dashboard reads
+        // sdk.parked to render the calm amber "update to resume" advisory.
+        debug.emit(
+          "sdk.parked",
+          `[crossdeck] SDK parked — server no longer accepts this version's event format. Events held on-device (paused, not lost); update @cross-deck/react-native${info.minVersion ? ` to >= ${info.minVersion}` : ""} and ship a new build to resume.`,
+          { ...info },
+        );
+      },
     });
 
     const deviceInfo: DeviceInfo = collectDeviceInfo({

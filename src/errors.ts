@@ -21,6 +21,8 @@ export type CrossdeckErrorType =
   | "permission_error"
   | "invalid_request_error"
   | "rate_limit_error"
+  // version_error → HTTP 426: SDK wire format too old. The queue PARKS.
+  | "version_error"
   | "internal_error"
   | "network_error"
   | "configuration_error";
@@ -39,6 +41,14 @@ export interface CrossdeckErrorPayload {
    * honour this — the server is telling you the safe rate.
    */
   retryAfterMs?: number;
+  /**
+   * Required SDK version floor — populated only on a `426 Upgrade Required`
+   * / `sdk_version_unsupported` response, so the PARK message names the
+   * exact version to update to.
+   */
+  minVersion?: string;
+  /** SDK surface the rejection applies to (web/node/swift/…), on a 426. */
+  surface?: string;
 }
 
 export class CrossdeckError extends Error {
@@ -47,6 +57,8 @@ export class CrossdeckError extends Error {
   public readonly requestId?: string;
   public readonly status?: number;
   public readonly retryAfterMs?: number;
+  public readonly minVersion?: string;
+  public readonly surface?: string;
 
   constructor(payload: CrossdeckErrorPayload) {
     super(payload.message);
@@ -56,6 +68,8 @@ export class CrossdeckError extends Error {
     this.requestId = payload.requestId;
     this.status = payload.status;
     this.retryAfterMs = payload.retryAfterMs;
+    this.minVersion = payload.minVersion;
+    this.surface = payload.surface;
     // Restore prototype chain — needed when downlevelled past ES2015
     // (Hermes pre-0.74, Babel transpiled targets).
     Object.setPrototypeOf(this, CrossdeckError.prototype);
@@ -89,6 +103,9 @@ export async function crossdeckErrorFromResponse(
       requestId: envelope.request_id ?? requestId,
       status: res.status,
       retryAfterMs,
+      // PARK metadata, present only on a 426 / sdk_version_unsupported body.
+      minVersion: typeof envelope.minVersion === "string" ? envelope.minVersion : undefined,
+      surface: typeof envelope.surface === "string" ? envelope.surface : undefined,
     });
   }
   return new CrossdeckError({

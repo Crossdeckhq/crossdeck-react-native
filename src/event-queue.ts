@@ -151,6 +151,16 @@ export interface EventQueueConfig {
     droppedCount: number;
     lastError: string;
   }) => void;
+  /**
+   * Fired when the server PARKS this SDK with HTTP 426 Upgrade Required
+   * (code `sdk_version_unsupported`) — the wire dialect is too old. Third
+   * outcome, distinct from retry (transient) and drop (invalid): the data
+   * is good, only the format is stale. The queue holds the events durably
+   * (AsyncStorage), stops flushing, and on the next launch AFTER upgrade the
+   * rehydrated queue delivers them. Surfaced once to the developer console +
+   * the dashboard (heartbeat). `minVersion` is the required floor if supplied.
+   */
+  onParked?: (info: { minVersion?: string; surface?: string }) => void;
 }
 
 export interface EventQueueStats {
@@ -184,6 +194,16 @@ export class EventQueue {
   private cancelTimer: (() => void) | null = null;
   private firstFlushFired = false;
   private nextRetryAt: number | null = null;
+  /**
+   * PARK state (HTTP 426 / `sdk_version_unsupported`). Once parked, the
+   * queue stops flushing — retrying a known-too-old payload only burns the
+   * device's battery and bandwidth until the app ships an upgraded SDK. The
+   * held events stay durable (AsyncStorage) and deliver on the next launch's
+   * rehydrate, post-upgrade. Per-instance: a fresh launch starts unparked.
+   */
+  private parked = false;
+  /** One developer-facing console warning per instance — never per-event spam. */
+  private parkWarned = false;
   private readonly retry: RetryPolicy;
   private readonly persistent: PersistentEventStore | null;
 
@@ -249,6 +269,11 @@ export class EventQueue {
    *     backoff schedules a retry; the next `flush()` re-uses both.
    */
   async flush(): Promise<IngestResponse | null> {
+    // PARK hush: once the server has rejected our wire dialect as too old
+    // (426), every flush of the same-format payload fails identically. Hold
+    // — don't flush — until the next launch on an upgraded SDK. Events stay
+    // buffered + persisted, so they deliver on that launch.
+    if (this.parked) return null;
     // Resume an in-flight batch retry path: if we already have a
     // pending batch (prior flush failed, retry timer / caller is
     // re-invoking), re-attempt with the SAME batchId. Stripe
@@ -303,6 +328,40 @@ export class EventQueue {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.lastError = message;
+
+      // PARK (HTTP 426 / `sdk_version_unsupported`) — the THIRD outcome,
+      // checked BEFORE the permanent-4xx drop so a version-rejection never
+      // falls into it. The data is good; only the wire dialect is stale.
+      // Keep every held event — fold the in-flight batch to the FRONT of the
+      // buffer (oldest-first), FIFO-cap at 1000, persist (AsyncStorage) so the
+      // next launch's rehydrate delivers it — then hush.
+      if (isVersionRejected(err)) {
+        this.parked = true;
+        this.buffer = [...batch, ...this.buffer];
+        if (this.buffer.length > HARD_BUFFER_CAP) {
+          const overflow = this.buffer.length - HARD_BUFFER_CAP;
+          this.buffer.splice(0, overflow);
+          this.dropped += overflow;
+        }
+        this.pendingBatch = null;
+        this.pendingBatchId = null;
+        this.inFlight -= batch.length;
+        this.persistAll();
+        this.cfg.onBufferChange?.(this.buffer.length);
+        const minVersion = versionRejectionFloor(err);
+        if (!this.parkWarned) {
+          this.parkWarned = true;
+          console.warn(
+            "[Crossdeck] SDK outdated — the server is no longer accepting this " +
+              "version's event format. Your events are PARKED on-device (held, " +
+              "not lost) and will deliver automatically once you update " +
+              `@cross-deck/react-native${minVersion ? ` to >= ${minVersion}` : ""} ` +
+              "and ship a new build.",
+          );
+        }
+        this.cfg.onParked?.({ minVersion, surface: versionRejectionSurface(err) });
+        return null;
+      }
 
       // Permanent failures (4xx except 408/429) are NOT retryable.
       // Drop the batch loudly.
@@ -442,7 +501,35 @@ function isPermanent4xx(err: unknown): boolean {
   if (typeof status !== "number" || !Number.isFinite(status)) return false;
   if (status < 400 || status >= 500) return false;
   if (status === 408 || status === 429) return false;
+  // 426 is PARK, never drop — handled by isVersionRejected before this is
+  // reached, but excluded here too so no path can drop a parkable batch.
+  if (status === 426) return false;
   return true;
+}
+
+/**
+ * True when the server PARKED this SDK: HTTP 426 Upgrade Required — the
+ * status invented for exactly this ("your client is too old"). Unambiguous
+ * (no proxy emits 426 spuriously, unlike 400/422), corroborated by the
+ * machine code `sdk_version_unsupported`. Distinct from a permanent-4xx
+ * drop: the data is good, only the wire dialect is stale.
+ */
+function isVersionRejected(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  if ((err as { status?: unknown }).status === 426) return true;
+  return (err as { code?: unknown }).code === "sdk_version_unsupported";
+}
+
+/** Server-supplied required version floor from the 426 body, if present. */
+function versionRejectionFloor(err: unknown): string | undefined {
+  const v = (err as { minVersion?: unknown } | null)?.minVersion;
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+/** Server-supplied surface id from the 426 body, if present. */
+function versionRejectionSurface(err: unknown): string | undefined {
+  const v = (err as { surface?: unknown } | null)?.surface;
+  return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
 function defaultScheduler(fn: () => void, ms: number): () => void {

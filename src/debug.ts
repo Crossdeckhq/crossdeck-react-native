@@ -30,6 +30,11 @@ export type DebugSignal =
   // loud, regardless of debug mode — see the console.error in
   // crossdeck.ts.
   | "sdk.flush_permanent_failure"
+  // Emitted when the server PARKS the SDK (HTTP 426 / sdk_version_unsupported):
+  // the wire dialect is too old. Distinct from flush_permanent_failure —
+  // events are HELD on-device (not dropped) and deliver on the next launch
+  // after upgrade. The dashboard reads it to render the amber advisory.
+  | "sdk.parked"
   | "sdk.consent_changed"
   | "sdk.consent_denied"
   | "sdk.pii_scrubbed";
