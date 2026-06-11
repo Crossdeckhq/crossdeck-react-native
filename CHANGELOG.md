@@ -24,6 +24,19 @@ format. Purely additive; no public API change.
   `minVersion` / `surface` from the 426 body so the PARK message names the exact
   version. New `onParked` callback.
 
+**Fixed (no public API change):**
+
+- The empty-input contract is now codified cross-SDK as
+  `invalid-input-rejected-natively` and proven with a dedicated test:
+  `track("")` / `identify("")` reject at the call site by throwing a typed
+  `CrossdeckError` (`missing_event_name` / `missing_user_id`) and never reach
+  the wire — the React Native idiom of the invariant *"invalid input never
+  crashes the app."* No behaviour change; the guarantee is now documented and
+  tested.
+- Standalone-build fix: the `contract-failed` schema-lock test now reads the
+  bundled contract (`_contracts-bundled.ts`) instead of the monorepo
+  `contracts/` path, so the published-mirror release build no longer fails.
+
 See https://cross-deck.com/docs/sdk-event-durability/ for the durability contract.
 
 ## [1.6.0] — 2026-06-10

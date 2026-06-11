@@ -340,3 +340,29 @@ describe("diagnostics", () => {
     expect(d.entitlements.count).toBe(0);
   });
 });
+
+// Invalid-input contract (React Native idiom).
+//
+// The cross-SDK INVARIANT: no public API crashes the host app and invalid
+// input never reaches the wire. The React Native IDIOM for signalling that
+// rejection is a synchronous typed `CrossdeckError` throw — same as Web and
+// Node, deliberately different from Swift (which drops + debug-logs to match
+// its fire-and-forget surface). This proves the RN half of the invariant is
+// exactly as documented, not merely believed.
+describe("invalid input — rejected synchronously with a typed CrossdeckError", () => {
+  it("track('') throws CrossdeckError(missing_event_name) synchronously", () => {
+    const c = newClient();
+    expect(() => c.track("")).toThrowError(CrossdeckError);
+    try {
+      c.track("");
+    } catch (err) {
+      expect((err as CrossdeckError).code).toBe("missing_event_name");
+    }
+  });
+
+  it("identify('') rejects with CrossdeckError(missing_user_id)", async () => {
+    const c = newClient();
+    await expect(c.identify("")).rejects.toThrow(CrossdeckError);
+    await expect(c.identify("")).rejects.toMatchObject({ code: "missing_user_id" });
+  });
+});
