@@ -6,7 +6,7 @@ name: Release
 # (scripts/guard-ci-publish.mjs) refuses any other path.
 #
 # npmjs.com → @cross-deck/react-native → Trusted Publisher MUST name repository
-# "VistaApps-za/crossdeck-react-native" AND workflow "release.yml" exactly.
+# "Crossdeckhq/crossdeck-react-native" AND workflow "release.yml" exactly.
 
 on:
   push:

@@ -5,8 +5,8 @@
 
 Crossdeck's React Native SDK — **verified subscriptions, entitlements,
 error capture, and product telemetry across iOS + Android JS apps in
-one package**. Same SDK surface as [`@cross-deck/web`](https://github.com/VistaApps-za/crossdeck-web)
-+ [`@cross-deck/node`](https://github.com/VistaApps-za/crossdeck-node)
+one package**. Same SDK surface as [`@cross-deck/web`](https://github.com/Crossdeckhq/crossdeck-web)
++ [`@cross-deck/node`](https://github.com/Crossdeckhq/crossdeck-node)
 — cross-platform teams write identical call-sites.
 
 ```ts
@@ -76,7 +76,17 @@ Every Crossdeck SDK ships these patterns by default:
 - **4xx hard-stop.** Permanent failures (401 key revoked, 400/422
   schema, 403 permission, 404 endpoint) drop the batch + fire
   `onPermanentFailure` + `console.error` regardless of debug mode.
-  No silent infinite-retry-with-growing-backlog.
+  No silent infinite-retry-with-growing-backlog. One deliberate
+  exception: HTTP `426` is NOT a drop — it parks (next bullet).
+- **Outdated-version PARK (v1.7.0).** If the server ever stops
+  accepting this SDK version's event format (HTTP `426` /
+  `sdk_version_unsupported`), events are **parked, not lost**: held
+  at the front of the durable AsyncStorage queue (FIFO-capped at
+  1,000, surviving app restarts), flushing hushes (no wasted device
+  battery/bandwidth), one `console.warn` names the exact version to
+  update to (+ `onParked` callback and a typed `sdk.parked` debug
+  event), and everything backfills on the next launch after you ship
+  an upgraded build. See [the durability contract](https://cross-deck.com/docs/sdk-event-durability/).
 - **PII scrub default-on.** Email-shaped and card-number-shaped
   substrings rewritten to `<email>` / `<card>` (sentinel tokens
   match the backend's defence-in-depth scrubber). Recursive — nested
@@ -148,7 +158,7 @@ Crossdeck.diagnostics();
 //   anonymousId: "anon_1mqz3…",
 //   crossdeckCustomerId: "cdcust_abc",
 //   developerUserId: "user_847",
-//   sdkVersion: "1.0.0",
+//   sdkVersion: "1.7.0",
 //   baseUrl: "https://api.cross-deck.com/v1",
 //   platform: "ios",
 //   clock: { lastServerTime: 1779…, lastClientTime: 1779…, skewMs: 12 },
@@ -172,8 +182,8 @@ CrossdeckContracts.byId("per-user-cache-isolation");
 CrossdeckContracts.byPillar("entitlements");
 CrossdeckContracts.withStatus("proposed");
 CrossdeckContracts.findByTestName("identify(B) makes A's entitlements unreachable from in-memory");
-CrossdeckContracts.sdkVersion;        // "1.5.0"
-CrossdeckContracts.bundledIn;         // "@cross-deck/react-native@1.5.0"
+CrossdeckContracts.sdkVersion;        // "1.7.0"
+CrossdeckContracts.bundledIn;         // "@cross-deck/react-native@1.7.0"
 ```
 
 The `Contract` type is exported alongside; the binary-stability promise is documented in [`contracts/README.md`](https://github.com/VistaApps-za/crossdeck/blob/main/contracts/README.md).
@@ -221,4 +231,4 @@ For per-test-framework hooks see [`contracts/README.md` § Reporting contract fa
 
 ## License
 
-MIT © VistaApps (Pty) Ltd
+MIT © Crossdeck

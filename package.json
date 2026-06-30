@@ -1,12 +1,12 @@
 {
   "name": "@cross-deck/react-native",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Crossdeck SDK for React Native + Expo — verified subscriptions, entitlements, error capture, and product telemetry across iOS + Android JS apps in one package.",
   "license": "MIT",
   "homepage": "https://cross-deck.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/VistaApps-za/crossdeck-react-native.git"
+    "url": "git+https://github.com/Crossdeckhq/crossdeck-react-native.git"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
