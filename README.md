@@ -158,7 +158,7 @@ Crossdeck.diagnostics();
 //   anonymousId: "anon_1mqz3…",
 //   crossdeckCustomerId: "cdcust_abc",
 //   developerUserId: "user_847",
-//   sdkVersion: "1.7.0",
+//   sdkVersion: "1.7.1",
 //   baseUrl: "https://api.cross-deck.com/v1",
 //   platform: "ios",
 //   clock: { lastServerTime: 1779…, lastClientTime: 1779…, skewMs: 12 },
@@ -182,8 +182,8 @@ CrossdeckContracts.byId("per-user-cache-isolation");
 CrossdeckContracts.byPillar("entitlements");
 CrossdeckContracts.withStatus("proposed");
 CrossdeckContracts.findByTestName("identify(B) makes A's entitlements unreachable from in-memory");
-CrossdeckContracts.sdkVersion;        // "1.7.0"
-CrossdeckContracts.bundledIn;         // "@cross-deck/react-native@1.7.0"
+CrossdeckContracts.sdkVersion;        // "1.7.1"
+CrossdeckContracts.bundledIn;         // "@cross-deck/react-native@1.7.1"
 ```
 
 The `Contract` type is exported alongside; the binary-stability promise is documented in [`contracts/README.md`](https://github.com/VistaApps-za/crossdeck/blob/main/contracts/README.md).

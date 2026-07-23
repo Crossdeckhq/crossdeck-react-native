@@ -1170,7 +1170,12 @@ export class CrossdeckClient {
         /* defensive — reset() must be bulletproof for logout flows */
       }
     }
-    this.state.identity.reset();
+    // Only churn the anonymousId on a REAL logout (there was an identified
+    // user). Skipping the re-mint when anonymous is the fragmentation fix —
+    // auth-mirroring that fires reset() on every anonymous app launch must
+    // not re-mint the anon id per launch (CD-134). The rest still clears
+    // this session's accumulated state.
+    if (this.state.developerUserId) this.state.identity.reset();
     // Logout-grade wipe: removes EVERY per-user entitlement slot on
     // this device (layer (c) of the v1.4.0 isolation fix). A shared
     // device can never leave another user's entitlements readable

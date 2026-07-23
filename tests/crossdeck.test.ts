@@ -328,6 +328,18 @@ describe("reset", () => {
     expect(c.diagnostics().clock.lastClientTime).toBeNull();
     expect(c.diagnostics().clock.skewMs).toBeNull();
   });
+
+  it("preserves the anonymousId when never identified (CD-134 anti-fragmentation)", () => {
+    // reset() clears session state but must NOT re-mint the anon id when
+    // nobody was ever identified — otherwise auth-mirroring that fires
+    // reset() on every anonymous app launch fragments one person per launch.
+    const c = newClient();
+    const before = c.diagnostics().anonymousId;
+    c.reset();
+    c.reset();
+    expect(c.diagnostics().anonymousId).toBe(before);
+    expect(c.diagnostics().developerUserId).toBeNull();
+  });
 });
 
 describe("diagnostics", () => {
